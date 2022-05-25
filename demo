@@ -1,0 +1,188 @@
+
+import pandas as pd
+import numpy as np
+import functions as myfunction
+import csv
+
+def main():
+    fileNames=[
+    'data_JakeLewis.txt',
+    'data_Bayouboy.txt',
+    'data_Chatellier.txt',
+    'data_darkprince666_2006.txt',
+    'data_jagjen2003.txt',
+    'data_jim90020.txt',
+    'data_John.txt',
+    'data_Lowvoltage.txt',
+    'data_Maken_do_692003.txt',
+    'data_Olgdaddy611.txt',
+    'data_malen.txt',
+    'normalConvo1.txt',
+    'normalConvo2.txt',
+    'normalConvo3.txt',
+    'Elon_Musk_interview.txt',
+    'Bill_Gates_interview.txt',
+    'data_h_k43232.txt',
+    'data_prcvegas10.txt',
+    'data_racineguy22.txt',
+    'data_swgamaleyss.txt',
+    'data_thomascoffen.txt',
+    'data_bearinwolfsfur.txt',
+    'data_blandmtthw.txt',
+    'data_gjk1352.txt'
+    
+    ]
+    #Baseline rate used for classifying suspicous data Suggested rate is .25
+    baselineRate= float(input("What do you want the baseline rate to be for this program "))#.25
+    ans=input(" What file do you want to use \n")
+
+    #Run the program with all the files in filename
+    if ans=='all':
+        for file in fileNames:
+            inputfilename = file
+            outputfilename = file.replace('.txt',"") + "_analyzed.csv"
+            
+            #####################################################################################
+            #Variables to store number of bullying and grooming keyword matches as well as baselineRate
+            totalCB=0
+            totalCG=0
+
+    #####################################################################################
+    #  convert original data to tsv format
+    #  data source: http://www.perverted-justice.com/?archive=mlchatellier
+            tsvfilename = inputfilename.replace('.txt', '.tsv')
+            ret = myfunction.convert_rawdata2tsv(inputfilename, tsvfilename)
+            if ret == 0:    # not able to read the data file
+                quit()
+
+    #####################################################################################
+    # loading tsv data
+            elif ret==2:
+                colnames = ['speaker', 'message']
+                data = pd.read_csv(tsvfilename, sep='\t', names=colnames, header=None)
+            else :
+                colnames = ['speaker', 'time', 'message']
+                data = pd.read_csv(tsvfilename, sep='\t', names=colnames, header=None)
+
+    #####################################################################################
+    # loading reference dictionary files
+            dic_CB = pd.read_csv("CyberBullying_Common.csv")
+            dic_CG = pd.read_csv("Cyber_Groomin_Common.csv")
+            dic_positivity = pd.read_csv("positive_negative-words_dict.csv")
+
+    #####################################################################################
+    # removing stop words in each sentence
+            dic_Stop=pd.read_csv("stopWords.csv")
+            stop=[]
+    #store stop words dictionary values in array
+            for x in dic_Stop.index:
+                stop.append(dic_Stop.loc[x, "StopWords"])
+
+            data["Message without Stop Words"]=data["message"].apply(lambda words: ' '.join(word.lower() for word in words.split() if word not in stop))
+            countSG=0
+
+
+    #####################################################################################
+    # adding new columns with default value of zero
+            data = data.reindex(columns=[*data.columns.tolist(), '# of Words', 'Positive', 'Negative', 'Neutral', '(Pos/Tot)-(Neg/Tot)', 'Bullying Match', 'Grooming Match', "Class"], fill_value=0.0)
+            data = data.reindex(columns=[*data.columns.tolist(), 'Risk Score','Risk Level'], fill_value='')
+            #data = data.reindex(columns=[*data.columns.tolist(), 'Set #', 'Pos Sum', 'Neg Sum', 'Ratio Sum', 'Pos Diff', 'Neg Diff', 'Ratio Diff', 'Risk Score','Risk Level'], fill_value='')#New feature calculated by (1.5#CG + .3#neg)/total words
+            
+    #  process each line of data instance
+            for ind in data.index:
+                message = data.loc[ind, "Message without Stop Words"]       # temporary store the message
+                words = message.split()                 # split message by empty space
+                next=ind+1
+                if len(message) == 0:
+                    continue    # no message skip processing the current instance
+
+                total_words = len(words)
+                data.loc[ind, '# of Words'] = total_words  # store the size of words
+
+        #  process words in each message and update associated features
+                for word in words:
+                    if word[len(word)-1]=='.' or word[len(word)-1]=='?' or word[len(word)-1]=='!':
+                        word=word[:-1]
+                    polarity = myfunction.determinePolarities(word, dic_positivity)
+                    if polarity == -1:
+                        data.loc[ind, "Negative"] += 1
+                    elif polarity == 0:
+                        data.loc[ind, "Neutral"] += 1
+                    elif polarity == 1:
+                        data.loc[ind, "Positive"] += 1
+
+            # determine bullying counts
+                    if myfunction.determineBullying(word, dic_CB) == 1:
+                        data.loc[ind, "Bullying Match"] += 1
+                        totalCB+=1
+
+            # determine grooming counts
+                    if myfunction.determineGrooming(word, dic_CG)==1:
+                        data.loc[ind, "Grooming Match"]+=1
+                        totalCG+=1
+
+                    positive = float(data.loc[ind, "Positive"])
+                    negative = float(data.loc[ind, "Negative"])
+        
+           # Update values for columns as needed
+                if data.loc[ind,"Grooming Match"] > 0:
+                    data.loc[ind, "Class"]= 'SG' #'SG'
+                    countSG+=1
+                elif data.loc[ind,"Grooming Match"]==0:
+                    data.loc[ind, "Class"]= 'N' #'SG'
+                elif data.loc[ind,'Bullying Match'] >  0:
+                    data.loc[ind, "Class"]= 'SB'
+                else :
+                    data.loc[ind, "Class"]= 'N'
+             
+              
+               
+        #Evaluate risk for each moment and use the risk threhold to classify it as high or low
+                data.loc[ind,'Risk Score']= (data.loc[ind,"Grooming Match"] + .25*data.loc[ind,"Negative"])/data.loc[ind, '# of Words']
+
+                if data.loc[ind,'Risk Score']<= 0.3:
+                    data.loc[ind,'Risk Level']='Low'
+
+                else:
+                   data.loc[ind,'Risk Level']='High'
+
+             
+
+            pd.to_numeric(data["Risk Level"],errors='coerce')
+
+    #Classify the conversation
+            status=0 # Monitors which overall classification the conversation falls under
+            print(" " + inputfilename + " dataset results: \n")
+            if totalCB/data["# of Words"].sum() >= (data["# of Words"].sum() * .1) and totalCG/data["# of Words"].sum()>(data["# of Words"].sum() * .1) :
+                print("Given conversation shows signs of both Cyber bullying and cybergrooming")
+                status=3
+            elif totalCB/data["# of Words"].sum() >= (data["# of Words"].sum() * .1) :# If bullying words make up 10% or more of the total words (without stop words)
+                print("Given conversation shows signs of cyber bullying")
+                status=1
+            elif totalCG/data["# of Words"].sum()>=(data["# of Words"].sum() * .1) or countSG >=5 :# If grooming words make up 10% or more of the total words (without stop words) or there are more than three instances of SG matches
+                print("Given conversation shows signs of cyber grooming")
+                status=2
+            elif data["Positive"].sum()/data["# of Words"].sum()< (data["Negative"].sum()/data["# of Words"].sum()) and (data["Negative"].sum()/data["# of Words"].sum()) >= baselineRate:
+                print("Given conversation seems suspicious")#When conversation doesn't have alot of keyword matches but contains alot of negative words
+            else :
+                print("Given conversation seems normal")
+        
+            if status==0:
+                data = data.reindex(columns=[*data.columns.tolist(), "Overall Class"], fill_value="Normal")
+            elif status==1:
+                data = data.reindex(columns=[*data.columns.tolist(), "Overall Class"], fill_value="Cyber Bullying")
+            elif status==2:
+                data = data.reindex(columns=[*data.columns.tolist(), "Overall Class"], fill_value="Cyber Grooming")
+            elif status==3:
+                data = data.reindex(columns=[*data.columns.tolist(), "Overall Class"], fill_value="Cyber Bullying & Cyber Grooming")
+   
+            data.to_csv(outputfilename, index = False, header=True)
+
+   else:
+           print("error must run through all files")
+
+if __name__ == '__main__':
+    main()
+
+
+
